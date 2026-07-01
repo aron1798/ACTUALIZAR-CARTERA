@@ -1,0 +1,25 @@
+name: Actualizar Cartera
+on:
+  schedule:
+    - cron: '0 11 * * *'   # 6:00 am Perú (UTC-5 = 11:00 UTC), 1 vez al día
+  workflow_dispatch:        # permite ejecutarlo manual desde GitHub
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python carga_cartera.py
+        env:
+          PG_HOST: ${{ secrets.PG_HOST }}
+          PG_DATABASE: ${{ secrets.PG_DATABASE }}
+          PG_USER: ${{ secrets.PG_USER }}
+          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          PG_PORT: ${{ secrets.PG_PORT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          CARTERA_URL: ${{ secrets.CARTERA_URL }}
+          CARTERA_KEY: ${{ secrets.CARTERA_KEY }}
