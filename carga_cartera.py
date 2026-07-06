@@ -24,7 +24,13 @@ def _norm_tel(v):
     s = str(v or "")
     for x in ("+51", "+", " ", "-", "(", ")"):
         s = s.replace(x, "")
-    return s.strip()
+    s = s.strip()
+    # Descartar: vacíos, solo ceros, y números de 6 dígitos o menos
+    if not s or set(s) == {"0"}:
+        return ""
+    if s.isdigit() and len(s) <= 6:
+        return ""
+    return s
 
 
 def _txt(v):
