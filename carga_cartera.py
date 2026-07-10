@@ -1,5 +1,6 @@
 # carga_cartera.py — genera la base de cartera y la sube a Supabase (GitHub Actions)
 # Lee el mapa de campañas desde la tabla 'campanias' de Supabase (no hardcodeado).
+# Normaliza programa/sede con la tabla 'alias_normalizacion' antes de subir.
 import os
 from datetime import datetime, date
 
@@ -18,6 +19,7 @@ CARTERA_URL = os.environ["CARTERA_URL"]            # destino: cartera_junta + ca
 CARTERA_KEY = os.environ["CARTERA_KEY"]
 CARTERA_TABLA = "cartera_junta"
 CAMPANIAS_TABLA = "campanias"
+ALIAS_TABLA = "alias_normalizacion"
 
 
 def _norm_tel(v):
@@ -71,6 +73,31 @@ def traer_campanias():
     filas = res.data or []
     print(f"  Campañas leídas de Supabase: {len(filas)}")
     return filas
+
+
+def traer_alias():
+    """Lee el diccionario alias_normalizacion (proyecto CARTERA) → dicts programa y sede."""
+    from supabase import create_client
+    sb = create_client(CARTERA_URL, CARTERA_KEY)
+    res = sb.table(ALIAS_TABLA).select("tipo,alias,correcto").execute()
+    prog, sede = {}, {}
+    for r in (res.data or []):
+        tipo = str(r.get("tipo", "")).upper()
+        alias = " ".join(str(r.get("alias", "")).upper().split())
+        corr = str(r.get("correcto", ""))
+        if tipo == "PROGRAMA":
+            prog[alias] = corr
+        elif tipo == "SEDE":
+            sede[alias] = corr
+    print(f"  Alias: {len(prog)} programa, {len(sede)} sede")
+    return prog, sede
+
+
+def _norm_valor(v, mapa):
+    """MAYÚSCULAS + colapsar espacios (mantiene acentos); aplica el diccionario.
+    Si no está en el diccionario, deja el valor tal cual (será 'no identificado')."""
+    s = " ".join(str(v or "").upper().split())
+    return mapa.get(s, s)
 
 
 def _values_sql(campanias):
@@ -183,17 +210,16 @@ def main():
     if not campanias:
         print("❌ No hay campañas en la tabla. Aborto.")
         return
-
+    print("Leyendo diccionario de normalización...")
+    mapa_prog, mapa_sede = traer_alias()
     print("Trayendo Postgre (Chatwoot)...")
     pg = traer_postgre(campanias)
     print(f"  Postgre: {len(pg)} filas")
     print("Trayendo Supabase (datos_unificados)...")
     sup = traer_supabase()
     print(f"  Supabase: {len(sup)} filas")
-
     todos = pg + sup
     print(f"Total combinado (con repetidos): {len(todos)}")
-
     # Marcar ES_ORIGEN: SI a la ganadora por teléfono (más antigua + desempate), NO al resto
     orden = sorted(range(len(todos)), key=lambda i: _clave_orden(todos[i]))
     ya_origen = set()
@@ -204,7 +230,6 @@ def main():
             ya_origen.add(tel)
         else:
             todos[i]["es_origen"] = "NO"
-
     filas = []
     for r in todos:
         f = r["fecha"]
@@ -212,13 +237,12 @@ def main():
             "telefono": r["telefono"],
             "canal": r["canal"],
             "fecha_creada": f.isoformat() if f else None,
-            "sede": r["sede"],
-            "programa": r["programa"],
+            "sede": _norm_valor(r["sede"], mapa_sede),
+            "programa": _norm_valor(r["programa"], mapa_prog),
             "codigo": r["codigo"],
             "es_origen": r["es_origen"],
             "origen_base": r["origen_base"],
         })
-
     print(f"Subiendo {len(filas)} filas a {CARTERA_TABLA}...")
     subir_a_supabase(filas)
     print("✅ Cartera actualizada.")
