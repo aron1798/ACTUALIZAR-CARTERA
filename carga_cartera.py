@@ -126,10 +126,12 @@ def traer_postgre(campanias):
         REPLACE(REPLACE(c.phone_number, '+51', ''), '+', '') AS telefono,
         m.created_at AS fecha_creada,
         map.cargo AS programa, map.sede AS sede,
-        map.codigo AS codigo, map.origen AS origen
+        map.codigo AS codigo, map.origen AS origen,
+        u.name AS asesor
     FROM messages m
     JOIN conversations cv ON m.conversation_id = cv.id
     JOIN contacts c ON cv.contact_id = c.id
+    LEFT JOIN users u ON cv.assignee_id = u.id
     JOIN (VALUES
 {_values_sql(campanias)}
     ) AS map(frase_busqueda, cargo, codigo, sede, dia, origen, fecha_inicio, fecha_fin)
@@ -141,13 +143,14 @@ def traer_postgre(campanias):
     """
     cur.execute(sql)
     out = []
-    for tel, fecha, programa, sede, codigo, origen in cur.fetchall():
+    for tel, fecha, programa, sede, codigo, origen, asesor in cur.fetchall():
         t = _norm_tel(tel)
         if not t:
             continue
         out.append({"telefono": t, "fecha": _to_fecha(fecha),
                     "canal": _txt(origen), "sede": _txt(sede),
                     "programa": _txt(programa), "codigo": _txt(codigo),
+                    "asesor": _txt(asesor),
                     "origen_base": "POSTGRE"})
     conn.close()
     return out
@@ -160,7 +163,7 @@ def traer_supabase():
     paso, desde = 1000, 0
     while True:
         res = sb.table(SUPABASE_TABLA).select(
-            "Telefono,Fechacreada,Canal,Sede,Programa,Codigo"
+            "Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo"
         ).range(desde, desde + paso - 1).execute()
         data = res.data or []
         if not data:
@@ -173,6 +176,7 @@ def traer_supabase():
                 "telefono": t, "fecha": _to_fecha(r.get("Fechacreada")),
                 "canal": _txt(r.get("Canal")), "sede": _txt(r.get("Sede")),
                 "programa": _txt(r.get("Programa")), "codigo": _txt(r.get("Codigo")),
+                "asesor": _txt(r.get("Ejecutivo")),
                 "origen_base": "SUPABASE",
             })
         if len(data) < paso:
@@ -240,6 +244,7 @@ def main():
             "sede": _norm_valor(r["sede"], mapa_sede),
             "programa": _norm_valor(r["programa"], mapa_prog),
             "codigo": r["codigo"],
+            "asesor": r.get("asesor", ""),
             "es_origen": r["es_origen"],
             "origen_base": r["origen_base"],
         })
