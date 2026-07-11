@@ -1,6 +1,6 @@
 # carga_cartera.py — genera la base de cartera y la sube a Supabase (GitHub Actions)
 # Lee el mapa de campañas desde la tabla 'campanias' de Supabase (no hardcodeado).
-# Normaliza programa/sede con la tabla 'alias_normalizacion' antes de subir.
+# Normaliza programa/sede/asesor con la tabla 'alias_normalizacion' antes de subir.
 import os
 from datetime import datetime, date
 
@@ -76,11 +76,11 @@ def traer_campanias():
 
 
 def traer_alias():
-    """Lee el diccionario alias_normalizacion (proyecto CARTERA) → dicts programa y sede."""
+    """Lee el diccionario alias_normalizacion → dicts programa, sede y asesor."""
     from supabase import create_client
     sb = create_client(CARTERA_URL, CARTERA_KEY)
     res = sb.table(ALIAS_TABLA).select("tipo,alias,correcto").execute()
-    prog, sede = {}, {}
+    prog, sede, asesor = {}, {}, {}
     for r in (res.data or []):
         tipo = str(r.get("tipo", "")).upper()
         alias = " ".join(str(r.get("alias", "")).upper().split())
@@ -89,8 +89,10 @@ def traer_alias():
             prog[alias] = corr
         elif tipo == "SEDE":
             sede[alias] = corr
-    print(f"  Alias: {len(prog)} programa, {len(sede)} sede")
-    return prog, sede
+        elif tipo == "ASESOR":
+            asesor[alias] = corr
+    print(f"  Alias: {len(prog)} programa, {len(sede)} sede, {len(asesor)} asesor")
+    return prog, sede, asesor
 
 
 def _norm_valor(v, mapa):
@@ -215,7 +217,7 @@ def main():
         print("❌ No hay campañas en la tabla. Aborto.")
         return
     print("Leyendo diccionario de normalización...")
-    mapa_prog, mapa_sede = traer_alias()
+    mapa_prog, mapa_sede, mapa_ase = traer_alias()
     print("Trayendo Postgre (Chatwoot)...")
     pg = traer_postgre(campanias)
     print(f"  Postgre: {len(pg)} filas")
@@ -244,7 +246,7 @@ def main():
             "sede": _norm_valor(r["sede"], mapa_sede),
             "programa": _norm_valor(r["programa"], mapa_prog),
             "codigo": r["codigo"],
-            "asesor": r.get("asesor", ""),
+            "asesor": _norm_valor(r.get("asesor", ""), mapa_ase),
             "es_origen": r["es_origen"],
             "origen_base": r["origen_base"],
         })
