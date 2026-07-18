@@ -1,8 +1,8 @@
 name: Actualizar Cartera
 on:
   schedule:
-    - cron: '0 11 * * *'   # 6:00 am Perú (UTC-5 = 11:00 UTC), 1 vez al día
-  workflow_dispatch:        # permite ejecutarlo manual desde GitHub
+    - cron: '*/30 * * * *'   # cada 30 minutos
+  workflow_dispatch:          # permite ejecutarlo manual desde GitHub
 jobs:
   actualizar:
     runs-on: ubuntu-latest
