@@ -3,18 +3,15 @@
 # Normaliza programa/sede/asesor con la tabla 'alias_normalizacion' antes de subir.
 import os
 from datetime import datetime, date
-
 # ── Credenciales desde variables de entorno (GitHub Secrets) ─────────────
 PG_HOST = os.environ["PG_HOST"]
 PG_DATABASE = os.environ["PG_DATABASE"]
 PG_USER = os.environ["PG_USER"]
 PG_PASSWORD = os.environ["PG_PASSWORD"]
 PG_PORT = os.environ.get("PG_PORT", "5432")
-
 SUPABASE_URL = os.environ["SUPABASE_URL"]          # origen: datos_unificados
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 SUPABASE_TABLA = "datos_unificados"
-
 CARTERA_URL = os.environ["CARTERA_URL"]            # destino: cartera_junta + campanias
 CARTERA_KEY = os.environ["CARTERA_KEY"]
 CARTERA_TABLA = "cartera_junta"
@@ -120,8 +117,22 @@ def _values_sql(campanias):
 
 def traer_postgre(campanias):
     import psycopg2
-    conn = psycopg2.connect(host=PG_HOST, dbname=PG_DATABASE, user=PG_USER,
-                            password=PG_PASSWORD, port=PG_PORT)
+    import time
+    # Reintenta la conexión a Postgre (por si da timeout momentáneo)
+    INTENTOS = 3
+    ESPERA = 10  # segundos entre intentos
+    conn = None
+    for intento in range(1, INTENTOS + 1):
+        try:
+            conn = psycopg2.connect(host=PG_HOST, dbname=PG_DATABASE, user=PG_USER,
+                                    password=PG_PASSWORD, port=PG_PORT,
+                                    connect_timeout=30)
+            break
+        except psycopg2.OperationalError as e:
+            print(f"  ⚠️ Conexión Postgre falló (intento {intento}/{INTENTOS}): {e}")
+            if intento == INTENTOS:
+                raise
+            time.sleep(ESPERA)
     cur = conn.cursor()
     sql = f"""
     SELECT DISTINCT ON (m.id)
