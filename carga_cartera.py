@@ -3,15 +3,18 @@
 # Normaliza programa/sede/asesor con la tabla 'alias_normalizacion' antes de subir.
 import os
 from datetime import datetime, date
+
 # ── Credenciales desde variables de entorno (GitHub Secrets) ─────────────
 PG_HOST = os.environ["PG_HOST"]
 PG_DATABASE = os.environ["PG_DATABASE"]
 PG_USER = os.environ["PG_USER"]
 PG_PASSWORD = os.environ["PG_PASSWORD"]
 PG_PORT = os.environ.get("PG_PORT", "5432")
+
 SUPABASE_URL = os.environ["SUPABASE_URL"]          # origen: datos_unificados
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 SUPABASE_TABLA = "datos_unificados"
+
 CARTERA_URL = os.environ["CARTERA_URL"]            # destino: cartera_junta + campanias
 CARTERA_KEY = os.environ["CARTERA_KEY"]
 CARTERA_TABLA = "cartera_junta"
@@ -170,6 +173,10 @@ def traer_postgre(campanias):
 
 
 def traer_supabase():
+    """Lee TODAS las filas de datos_unificados paginando.
+    FIX: parar SOLO cuando Supabase devuelve 0 filas (antes cortaba si un
+    bloque venía con < 1000, lo que dejaba miles de filas sin leer y hacía
+    que el total 'bailara' entre corridas)."""
     from supabase import create_client
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
     out = []
@@ -177,10 +184,10 @@ def traer_supabase():
     while True:
         res = sb.table(SUPABASE_TABLA).select(
             "Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo"
-        ).range(desde, desde + paso - 1).execute()
+        ).order("Telefono").range(desde, desde + paso - 1).execute()   # orden estable
         data = res.data or []
         if not data:
-            break
+            break                        # SOLO parar cuando NO devuelve NADA
         for r in data:
             t = _norm_tel(r.get("Telefono"))
             if not t:
@@ -192,9 +199,8 @@ def traer_supabase():
                 "asesor": _txt(r.get("Ejecutivo")),
                 "origen_base": "SUPABASE",
             })
-        if len(data) < paso:
-            break
-        desde += paso
+        desde += len(data)               # avanzar por lo REALMENTE recibido
+    print(f"  Supabase leídas (crudas, incl. telefonos filtrados): {desde}")
     return out
 
 
@@ -227,16 +233,31 @@ def main():
     if not campanias:
         print("❌ No hay campañas en la tabla. Aborto.")
         return
+
     print("Leyendo diccionario de normalización...")
     mapa_prog, mapa_sede, mapa_ase = traer_alias()
+
     print("Trayendo Postgre (Chatwoot)...")
     pg = traer_postgre(campanias)
     print(f"  Postgre: {len(pg)} filas")
+
     print("Trayendo Supabase (datos_unificados)...")
     sup = traer_supabase()
     print(f"  Supabase: {len(sup)} filas")
+
     todos = pg + sup
     print(f"Total combinado (con repetidos): {len(todos)}")
+
+    # SEGURIDAD: si la carga vino muy chica, NO vaciar cartera_junta (evita
+    # destruir la cartera buena con una corrida incompleta). Ajusta el mínimo.
+    MINIMO_ESPERADO = 100000
+    if len(todos) < MINIMO_ESPERADO:
+        raise SystemExit(
+            f"❌ ABORTADO: solo {len(todos)} filas combinadas (< {MINIMO_ESPERADO}). "
+            f"NO se vacía {CARTERA_TABLA} para no perder datos. "
+            f"Revisa Postgre ({len(pg)}) y datos_unificados ({len(sup)})."
+        )
+
     # Marcar ES_ORIGEN: SI a la ganadora por teléfono (más antigua + desempate), NO al resto
     orden = sorted(range(len(todos)), key=lambda i: _clave_orden(todos[i]))
     ya_origen = set()
@@ -247,6 +268,7 @@ def main():
             ya_origen.add(tel)
         else:
             todos[i]["es_origen"] = "NO"
+
     filas = []
     for r in todos:
         f = r["fecha"]
@@ -261,6 +283,7 @@ def main():
             "es_origen": r["es_origen"],
             "origen_base": r["origen_base"],
         })
+
     print(f"Subiendo {len(filas)} filas a {CARTERA_TABLA}...")
     subir_a_supabase(filas)
     print("✅ Cartera actualizada.")
