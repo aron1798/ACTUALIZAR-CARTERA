@@ -122,24 +122,28 @@ def _values_sql(campanias):
     return ",\n".join(out)
 
 
-def traer_postgre(campanias):
+def _pg_connect():
+    """Conexión a Postgre con reintentos (por timeout momentáneo)."""
     import psycopg2
     import time
-    # Reintenta la conexión a Postgre (por si da timeout momentáneo)
     INTENTOS = 3
-    ESPERA = 10  # segundos entre intentos
-    conn = None
+    ESPERA = 10
     for intento in range(1, INTENTOS + 1):
         try:
-            conn = psycopg2.connect(host=PG_HOST, dbname=PG_DATABASE, user=PG_USER,
+            return psycopg2.connect(host=PG_HOST, dbname=PG_DATABASE, user=PG_USER,
                                     password=PG_PASSWORD, port=PG_PORT,
                                     connect_timeout=30)
-            break
         except psycopg2.OperationalError as e:
             print(f"  ⚠️ Conexión Postgre falló (intento {intento}/{INTENTOS}): {e}")
             if intento == INTENTOS:
                 raise
             time.sleep(ESPERA)
+
+
+def traer_postgre(campanias):
+    """Leads de Chatwoot que hacen MATCH con una frase de campaña.
+    fecha_creada = fecha del mensaje de campaña (messages.created_at)."""
+    conn = _pg_connect()
     cur = conn.cursor()
     sql = f"""
     SELECT DISTINCT ON (m.id)
@@ -171,6 +175,41 @@ def traer_postgre(campanias):
                     "canal": _txt(origen), "sede": _txt(sede),
                     "programa": _txt(programa), "codigo": _txt(codigo),
                     "asesor": _txt(asesor),
+                    "origen_base": "POSTGRE"})
+    conn.close()
+    return out
+
+
+def traer_postgre_sin_campania(tels_con_campania):
+    """TODOS los contactos de Chatwoot que NO tienen mensaje de campaña.
+    Se meten con fecha_creada = contacts.created_at, canal COPITO, y su asesor
+    (users.name del assignee) si tiene. Se excluyen los que YA salieron por
+    campaña (tels_con_campania) para no duplicar: la campaña siempre gana.
+    Un solo query simple (Opción 1) -> liviano para Postgre."""
+    conn = _pg_connect()
+    cur = conn.cursor()
+    # Asesor = users.name del ULTIMO assignee del contacto (si tiene conversacion asignada)
+    sql = """
+    SELECT DISTINCT ON (c.id)
+        REPLACE(REPLACE(c.phone_number, '+51', ''), '+', '') AS telefono,
+        c.created_at AS fecha_creada,
+        u.name AS asesor
+    FROM contacts c
+    LEFT JOIN conversations cv ON cv.contact_id = c.id
+    LEFT JOIN users u ON cv.assignee_id = u.id
+    ORDER BY c.id ASC, cv.id DESC
+    """
+    cur.execute(sql)
+    out = []
+    for tel, fecha, asesor in cur.fetchall():
+        t = _norm_tel(tel)
+        if not t:
+            continue
+        if t in tels_con_campania:
+            continue   # ya entró por campaña -> NO duplicar (campaña gana)
+        out.append({"telefono": t, "fecha": _to_fecha(fecha),
+                    "canal": "COPITO", "sede": "", "programa": "",
+                    "codigo": "", "asesor": _txt(asesor),
                     "origen_base": "POSTGRE"})
     conn.close()
     return out
@@ -241,15 +280,22 @@ def main():
     print("Leyendo diccionario de normalización...")
     mapa_prog, mapa_sede, mapa_ase = traer_alias()
 
-    print("Trayendo Postgre (Chatwoot)...")
+    print("Trayendo Postgre (leads con mensaje de campaña)...")
     pg = traer_postgre(campanias)
-    print(f"  Postgre: {len(pg)} filas")
+    print(f"  Postgre (campaña): {len(pg)} filas")
+
+    # Set de telefonos que YA tienen campaña -> para no duplicarlos abajo
+    tels_campania = {r["telefono"] for r in pg}
+
+    print("Trayendo Postgre (contactos SIN mensaje de campaña)...")
+    pg_sin = traer_postgre_sin_campania(tels_campania)
+    print(f"  Postgre (sin campaña, created_at): {len(pg_sin)} filas")
 
     print("Trayendo Supabase (datos_unificados)...")
     sup = traer_supabase()
     print(f"  Supabase: {len(sup)} filas")
 
-    todos = pg + sup
+    todos = pg + pg_sin + sup
     print(f"Total combinado (con repetidos): {len(todos)}")
 
     # SEGURIDAD: si la carga vino muy chica, NO vaciar cartera_junta (evita
