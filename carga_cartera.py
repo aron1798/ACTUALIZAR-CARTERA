@@ -142,7 +142,8 @@ def _pg_connect():
 
 def traer_postgre(campanias):
     """Leads de Chatwoot que hacen MATCH con una frase de campaña.
-    fecha_creada = fecha del mensaje de campaña (messages.created_at)."""
+    fecha_creada = fecha del mensaje de campaña (messages.created_at).
+    Son filas REALES (solo_contacto=False)."""
     conn = _pg_connect()
     cur = conn.cursor()
     sql = f"""
@@ -175,7 +176,8 @@ def traer_postgre(campanias):
                     "canal": _txt(origen), "sede": _txt(sede),
                     "programa": _txt(programa), "codigo": _txt(codigo),
                     "asesor": _txt(asesor),
-                    "origen_base": "POSTGRE"})
+                    "origen_base": "POSTGRE",
+                    "solo_contacto": False})
     conn.close()
     return out
 
@@ -185,10 +187,10 @@ def traer_postgre_sin_campania(tels_con_campania):
     Se meten con fecha_creada = contacts.created_at, canal COPITO, y su asesor
     (users.name del assignee) si tiene. Se excluyen los que YA salieron por
     campaña (tels_con_campania) para no duplicar: la campaña siempre gana.
-    Un solo query simple (Opción 1) -> liviano para Postgre."""
+    Son filas SOLO-CONTACTO (solo_contacto=True): solo seran es_origen=SI si el
+    telefono NO tiene ninguna otra fila real (campaña/Excel)."""
     conn = _pg_connect()
     cur = conn.cursor()
-    # Asesor = users.name del ULTIMO assignee del contacto (si tiene conversacion asignada)
     sql = """
     SELECT DISTINCT ON (c.id)
         REPLACE(REPLACE(c.phone_number, '+51', ''), '+', '') AS telefono,
@@ -210,7 +212,8 @@ def traer_postgre_sin_campania(tels_con_campania):
         out.append({"telefono": t, "fecha": _to_fecha(fecha),
                     "canal": "COPITO", "sede": "", "programa": "",
                     "codigo": "", "asesor": _txt(asesor),
-                    "origen_base": "POSTGRE"})
+                    "origen_base": "POSTGRE",
+                    "solo_contacto": True})
     conn.close()
     return out
 
@@ -219,7 +222,7 @@ def traer_supabase():
     """Lee TODAS las filas de datos_unificados paginando.
     FIX: parar SOLO cuando Supabase devuelve 0 filas (antes cortaba si un
     bloque venía con < 1000, lo que dejaba miles de filas sin leer y hacía
-    que el total 'bailara' entre corridas)."""
+    que el total 'bailara' entre corridas). Son filas REALES (solo_contacto=False)."""
     from supabase import create_client
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
     out = []
@@ -241,6 +244,7 @@ def traer_supabase():
                 "programa": _txt(r.get("Programa")), "codigo": _txt(r.get("Codigo")),
                 "asesor": _txt(r.get("Ejecutivo")),
                 "origen_base": "SUPABASE",
+                "solo_contacto": False,
             })
         desde += len(data)               # avanzar por lo REALMENTE recibido
     print(f"  Supabase leídas (crudas, incl. telefonos filtrados): {desde}")
@@ -256,8 +260,12 @@ def _rango_canal(canal):
 
 
 def _clave_orden(r):
+    """Orden para elegir es_origen. Las filas SOLO-CONTACTO van SIEMPRE al final
+    (prioridad 1), asi una fila REAL (0) gana el origen aunque el contacto sea
+    mas antiguo. Dentro de cada grupo: mas antigua + desempate por canal."""
     FUTURO = date(9999, 1, 1)
-    return (r["fecha"] or FUTURO, _rango_canal(r["canal"]), r["canal"])
+    solo = 1 if r.get("solo_contacto") else 0
+    return (solo, r["fecha"] or FUTURO, _rango_canal(r["canal"]), r["canal"])
 
 
 def subir_a_supabase(filas):
@@ -308,7 +316,9 @@ def main():
             f"Revisa Postgre ({len(pg)}) y datos_unificados ({len(sup)})."
         )
 
-    # Marcar ES_ORIGEN: SI a la ganadora por teléfono (más antigua + desempate), NO al resto
+    # Marcar ES_ORIGEN: SI a la ganadora por teléfono. Las filas REALES (campaña/Excel)
+    # tienen prioridad sobre las SOLO-CONTACTO. Dentro: mas antigua + desempate canal.
+    # -> un contacto sin campaña SOLO es origen si el telefono no tiene fila real.
     orden = sorted(range(len(todos)), key=lambda i: _clave_orden(todos[i]))
     ya_origen = set()
     for i in orden:
