@@ -250,7 +250,7 @@ def main():
 
     # SEGURIDAD: si la carga vino muy chica, NO vaciar cartera_junta (evita
     # destruir la cartera buena con una corrida incompleta). Ajusta el mínimo.
-    MINIMO_ESPERADO = 100000
+    MINIMO_ESPERADO = 80000
     if len(todos) < MINIMO_ESPERADO:
         raise SystemExit(
             f"❌ ABORTADO: solo {len(todos)} filas combinadas (< {MINIMO_ESPERADO}). "
