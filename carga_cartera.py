@@ -30,6 +30,10 @@ def _norm_tel(v):
     # Descartar: vacíos, solo ceros, y números de 6 dígitos o menos
     if not s or set(s) == {"0"}:
         return ""
+    # Celular peruano con "51" pegado adelante (51900000000 a 51999999999)
+    # -> quitar el "51" para dejarlo en 9 dígitos (9XXXXXXXX).
+    if s.isdigit() and 51900000000 <= int(s) <= 51999999999:
+        s = s[2:]
     if s.isdigit() and len(s) <= 6:
         return ""
     return s
