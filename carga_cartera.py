@@ -219,22 +219,41 @@ def traer_postgre_sin_campania(tels_con_campania):
 
 
 def traer_supabase():
-    """Lee TODAS las filas de datos_unificados paginando.
-    FIX: parar SOLO cuando Supabase devuelve 0 filas (antes cortaba si un
-    bloque venía con < 1000, lo que dejaba miles de filas sin leer y hacía
-    que el total 'bailara' entre corridas). Son filas REALES (solo_contacto=False)."""
+    """Lee TODAS las filas de datos_unificados recorriendo la tabla COMPLETA.
+    FIX v3: paginación por CLAVE (keyset), no por posición. En vez de pedir
+    'la posición 31000' (que Supabase a veces devolvía vacía y cortaba la lectura),
+    se piden los siguientes 1000 registros DESPUÉS del último 'id' leído. Así se
+    recorre toda la tabla de inicio a fin sin depender de bloques vacíos, y el
+    total ya no 'baila' entre corridas. Son filas REALES (solo_contacto=False).
+    Al final valida contra el COUNT exacto: si no leyó todo, ABORTA (no sube
+    una cartera incompleta)."""
     from supabase import create_client
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+    # total real esperado (para validar al final)
+    try:
+        cres = sb.table(SUPABASE_TABLA).select("id", count="exact").limit(1).execute()
+        total = cres.count or 0
+    except Exception as e:
+        print(f"  [WARN] no se pudo contar datos_unificados: {e}")
+        total = 0
+    print(f"  datos_unificados total esperado: {total}")
+
     out = []
-    paso, desde = 1000, 0
+    paso = 1000
+    ultimo_id = -1     # empezamos antes del primer id
+    filas_crudas = 0
     while True:
-        res = sb.table(SUPABASE_TABLA).select(
-            "Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo"
-        ).order("Telefono").range(desde, desde + paso - 1).execute()   # orden estable
+        # keyset: trae los siguientes 'paso' registros con id > ultimo_id, en orden.
+        res = (sb.table(SUPABASE_TABLA)
+               .select("id,Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo")
+               .order("id").gt("id", ultimo_id).limit(paso).execute())
         data = res.data or []
         if not data:
-            break                        # SOLO parar cuando NO devuelve NADA
+            break                        # de verdad ya no hay más (recorrió toda la tabla)
         for r in data:
+            ultimo_id = r.get("id", ultimo_id)   # avanzar el cursor SIEMPRE
+            filas_crudas += 1
             t = _norm_tel(r.get("Telefono"))
             if not t:
                 continue
@@ -246,8 +265,20 @@ def traer_supabase():
                 "origen_base": "SUPABASE",
                 "solo_contacto": False,
             })
-        desde += len(data)               # avanzar por lo REALMENTE recibido
-    print(f"  Supabase leídas (crudas, incl. telefonos filtrados): {desde}")
+        print(f"    leyendo datos_unificados: {filas_crudas}", end="\r")
+    print()
+
+    # ══ DOBLE CHECK: count de la tabla  vs  filas recorridas 1000 a 1000 ══
+    print(f"  ── Doble check datos_unificados ──")
+    print(f"     COUNT tabla        : {total}")
+    print(f"     Recorridas (1000x1000): {filas_crudas}")
+    if total and filas_crudas != total:
+        raise SystemExit(
+            f"❌ ABORT: el COUNT ({total}) NO coincide con lo recorrido "
+            f"({filas_crudas}). Lectura incompleta -> NO se sube la cartera. Reintenta.")
+    print(f"     ✅ COINCIDEN: se recorrió la tabla completa.")
+
+    print(f"  Supabase leídas (crudas, incl. telefonos filtrados): {filas_crudas}")
     return out
 
 
