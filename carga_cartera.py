@@ -244,15 +244,24 @@ def traer_supabase():
     ultimo_id = -1     # empezamos antes del primer id
     filas_crudas = 0
     while True:
-        # keyset: trae los siguientes 'paso' registros con id > ultimo_id, en orden.
-        res = (sb.table(SUPABASE_TABLA)
-               .select("id,Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo")
-               .order("id").gt("id", ultimo_id).limit(paso).execute())
-        data = res.data or []
+        data = None
+        for intento in range(1, 4):
+            try:
+                res = (sb.table(SUPABASE_TABLA)
+                       .select("id,Telefono,...").order("id").gt("id", ultimo_id).limit(paso).execute())
+                data = res.data or []
+            except Exception as e:
+                print(f"⚠️ Error al pedir bloque (intento {intento}/3): {e}")
+                data = []
+            if data:
+                break
+            if intento < 3:
+                print(f"⚠️ Bloque vacío tras id {ultimo_id}. Reintento {intento}/3 en 3s...")
+                time.sleep(3)
         if not data:
-            break                        # de verdad ya no hay más (recorrió toda la tabla)
+            break
         for r in data:
-            ultimo_id = r.get("id", ultimo_id)   # avanzar el cursor SIEMPRE
+            ultimo_id = r.get("id", ultimo_id)
             filas_crudas += 1
             t = _norm_tel(r.get("Telefono"))
             if not t:
