@@ -246,20 +246,21 @@ def traer_supabase():
     filas_crudas = 0
     while True:
         data = None
-        for intento in range(1, 4):
+        for intento in range(1, 6):
             try:
                 res = (sb.table(SUPABASE_TABLA)
                        .select("id,Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo")
                        .order("id").gt("id", ultimo_id).limit(paso).execute())
                 data = res.data or []
             except Exception as e:
-                print(f"⚠️ Error al pedir bloque (intento {intento}/3): {e}")
+                print(f"⚠️ Error al pedir bloque (intento {intento}/5): {e}")
                 data = []
             if data:
                 break
-            if intento < 3:
-                print(f"⚠️ Bloque vacío tras id {ultimo_id}. Reintento {intento}/3 en 3s...")
-                time.sleep(3)
+            if intento < 5:
+                espera = intento * 8   # 8s, 16s, 24s, 32s (espera creciente, ~80s total)
+                print(f"⚠️ Bloque vacío tras id {ultimo_id}. Reintento {intento}/5 en {espera}s...")
+                time.sleep(espera)
         if not data:
             break
         for r in data:
