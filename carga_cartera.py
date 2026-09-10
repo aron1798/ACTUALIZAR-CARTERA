@@ -2,6 +2,7 @@
 # Lee el mapa de campañas desde la tabla 'campanias' de Supabase (no hardcodeado).
 # Normaliza programa/sede/asesor con la tabla 'alias_normalizacion' antes de subir.
 import os
+import time
 from datetime import datetime, date
 
 # ── Credenciales desde variables de entorno (GitHub Secrets) ─────────────
@@ -248,7 +249,8 @@ def traer_supabase():
         for intento in range(1, 4):
             try:
                 res = (sb.table(SUPABASE_TABLA)
-                       .select("id,Telefono,...").order("id").gt("id", ultimo_id).limit(paso).execute())
+                       .select("id,Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo")
+                       .order("id").gt("id", ultimo_id).limit(paso).execute())
                 data = res.data or []
             except Exception as e:
                 print(f"⚠️ Error al pedir bloque (intento {intento}/3): {e}")
