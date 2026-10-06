@@ -15,6 +15,15 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]          # origen: datos_unificados
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 SUPABASE_TABLA = "datos_unificados"
 
+# Conexión DIRECTA a Postgres del proyecto Supabase (solo para contar filas exactas
+# con SELECT COUNT(*), porque el count de la API REST no es fiable).
+# TODO: mover a GitHub Secrets y resetear esta contraseña por seguridad.
+SUPA_DB_HOST = "db.ogzjtkxnfswpbmnbhnjd.supabase.co"
+SUPA_DB_PORT = "5432"
+SUPA_DB_NAME = "postgres"
+SUPA_DB_USER = "postgres"
+SUPA_DB_PASSWORD = "MTFbJp9OVuUqCsak"
+
 CARTERA_URL = os.environ["CARTERA_URL"]            # destino: cartera_junta + campanias
 CARTERA_KEY = os.environ["CARTERA_KEY"]
 CARTERA_TABLA = "cartera_junta"
@@ -230,14 +239,23 @@ def traer_supabase():
     from supabase import create_client
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    # total real esperado (para validar al final)
+    # total real esperado (para validar al final) — SELECT COUNT(*) DIRECTO a Postgres.
+    # El count de la API REST no es fiable (devuelve números distintos cada corrida);
+    # este va directo a la base y es exacto siempre.
+    total = 0
     try:
-        cres = sb.table(SUPABASE_TABLA).select("id", count="exact").limit(1).execute()
-        total = cres.count or 0
+        import psycopg2
+        _conn = psycopg2.connect(host=SUPA_DB_HOST, dbname=SUPA_DB_NAME,
+                                 user=SUPA_DB_USER, password=SUPA_DB_PASSWORD,
+                                 port=SUPA_DB_PORT, connect_timeout=30)
+        _cur = _conn.cursor()
+        _cur.execute(f"SELECT COUNT(*) FROM {SUPABASE_TABLA}")
+        total = _cur.fetchone()[0] or 0
+        _conn.close()
     except Exception as e:
-        print(f"  [WARN] no se pudo contar datos_unificados: {e}")
+        print(f"  [WARN] no se pudo contar datos_unificados por SQL directo: {e}")
         total = 0
-    print(f"  datos_unificados total esperado: {total}")
+    print(f"  datos_unificados total esperado (SELECT COUNT directo): {total}")
 
     out = []
     paso = 1000
@@ -268,14 +286,14 @@ def traer_supabase():
         print(f"    leyendo datos_unificados: {filas_crudas}", end="\r")
     print()
 
-    # ══ DOBLE CHECK: count de la tabla  vs  filas recorridas 1000 a 1000 ══
-    # El count="exact" de Supabase no siempre es exacto (puede diferir por unas
-    # pocas filas). La paginación por id (keyset) SÍ recorre toda la tabla. Por eso
-    # solo abortamos si la diferencia es GRANDE (lectura realmente incompleta).
+    # ══ DOBLE CHECK: COUNT exacto (SQL directo)  vs  filas recorridas ══
+    # El COUNT viene de SELECT COUNT(*) directo a Postgres (exacto). Se permite una
+    # tolerancia de 50 filas (por si entraron/salieron un par de filas durante la
+    # lectura). Si la diferencia es mayor, la lectura vino incompleta -> ABORTA.
     TOLERANCIA = 50
     print(f"  ── Doble check datos_unificados ──")
-    print(f"     COUNT tabla        : {total}")
-    print(f"     Recorridas (1000x1000): {filas_crudas}")
+    print(f"     COUNT tabla (SQL directo): {total}")
+    print(f"     Recorridas (keyset)      : {filas_crudas}")
     if total and abs(filas_crudas - total) > TOLERANCIA:
         raise SystemExit(
             f"❌ ABORT: el COUNT ({total}) difiere de lo recorrido "
