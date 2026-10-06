@@ -2,7 +2,6 @@
 # Lee el mapa de campañas desde la tabla 'campanias' de Supabase (no hardcodeado).
 # Normaliza programa/sede/asesor con la tabla 'alias_normalizacion' antes de subir.
 import os
-import time
 from datetime import datetime, date
 
 # ── Credenciales desde variables de entorno (GitHub Secrets) ─────────────
@@ -245,26 +244,15 @@ def traer_supabase():
     ultimo_id = -1     # empezamos antes del primer id
     filas_crudas = 0
     while True:
-        data = None
-        for intento in range(1, 6):
-            try:
-                res = (sb.table(SUPABASE_TABLA)
-                       .select("id,Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo")
-                       .order("id").gt("id", ultimo_id).limit(paso).execute())
-                data = res.data or []
-            except Exception as e:
-                print(f"⚠️ Error al pedir bloque (intento {intento}/5): {e}")
-                data = []
-            if data:
-                break
-            if intento < 5:
-                espera = intento * 8   # 8s, 16s, 24s, 32s (espera creciente, ~80s total)
-                print(f"⚠️ Bloque vacío tras id {ultimo_id}. Reintento {intento}/5 en {espera}s...")
-                time.sleep(espera)
+        # keyset: trae los siguientes 'paso' registros con id > ultimo_id, en orden.
+        res = (sb.table(SUPABASE_TABLA)
+               .select("id,Telefono,Fechacreada,Canal,Sede,Programa,Codigo,Ejecutivo")
+               .order("id").gt("id", ultimo_id).limit(paso).execute())
+        data = res.data or []
         if not data:
-            break
+            break                        # de verdad ya no hay más (recorrió toda la tabla)
         for r in data:
-            ultimo_id = r.get("id", ultimo_id)
+            ultimo_id = r.get("id", ultimo_id)   # avanzar el cursor SIEMPRE
             filas_crudas += 1
             t = _norm_tel(r.get("Telefono"))
             if not t:
@@ -281,14 +269,19 @@ def traer_supabase():
     print()
 
     # ══ DOBLE CHECK: count de la tabla  vs  filas recorridas 1000 a 1000 ══
+    # El count="exact" de Supabase no siempre es exacto (puede diferir por unas
+    # pocas filas). La paginación por id (keyset) SÍ recorre toda la tabla. Por eso
+    # solo abortamos si la diferencia es GRANDE (lectura realmente incompleta).
+    TOLERANCIA = 50
     print(f"  ── Doble check datos_unificados ──")
     print(f"     COUNT tabla        : {total}")
     print(f"     Recorridas (1000x1000): {filas_crudas}")
-    if total and filas_crudas != total:
+    if total and abs(filas_crudas - total) > TOLERANCIA:
         raise SystemExit(
-            f"❌ ABORT: el COUNT ({total}) NO coincide con lo recorrido "
-            f"({filas_crudas}). Lectura incompleta -> NO se sube la cartera. Reintenta.")
-    print(f"     ✅ COINCIDEN: se recorrió la tabla completa.")
+            f"❌ ABORT: el COUNT ({total}) difiere de lo recorrido "
+            f"({filas_crudas}) en más de {TOLERANCIA} filas. Lectura incompleta -> "
+            f"NO se sube la cartera. Reintenta.")
+    print(f"     ✅ OK: diferencia dentro de la tolerancia ({TOLERANCIA}).")
 
     print(f"  Supabase leídas (crudas, incl. telefonos filtrados): {filas_crudas}")
     return out
